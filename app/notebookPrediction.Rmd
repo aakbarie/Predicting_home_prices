@@ -1,0 +1,233 @@
+---
+title: "A tutorial on variable selection and prediction of housing prices"
+author: "Akbar Akbari Esfahani"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(caret)
+library(mlbench)
+library(reshape2)
+library(corrplot)
+library(MCMCpack)
+library(ggfortify)
+```
+
+# Intro
+This notebook is a quick intro to data prediction and variable selection using various methods. We will explore, both forward and backward variable selection via linear regression, as well as a quick guide to data exploration and an advance method on model exploration using Bayesian methods. 
+
+The data from a city assessor that was interested in predicting home sale prices as a function of various characteristics of the home and the surrounding property.
+The data consists of sale price, finished square feet, # of bedrooms, # of bathrooms, AC, garage size (# of cars fitted), pool, year built, quality (1=high q, 2=med q, 3=low q), style, lot size, and adjacency to highway (1=yes, 0=no).
+
+```{r data ingestion, echo=TRUE}
+# reading in data
+rl_stt_data <- read.table("RealEstateSales.txt",header=T)
+
+# creating index for 70:30 data split
+index <- createDataPartition(rl_stt_data$price, p = 0.7, list = FALSE)
+training_set <- rl_stt_data[index, ]
+testing_set <- rl_stt_data[-index, ]
+```
+
+# Data Exploration
+
+I will use correlation matrix to explore the relationships between all the variables. The lighter the blue the more similar are the variables to each other.
+```{r data exploration, echo=TRUE}
+cor_matrix <- rl_stt_data %>%
+     dplyr::select(-price) %>%
+     cor(.) %>%
+     melt(.)
+
+ggplot(data = cor_matrix, aes(x=Var1, y=Var2, fill=value)) + 
+     geom_tile() +
+     labs(title = "Correlation Matrix", x = "", y = "", fill = "Correlation \nDistribution\n")
+```
+
+# Variable Selection
+
+Here I will be exploring traditional variable selection methods from Statistics, namely, step-wise selection, forward and backwards. I will be using linear regression with [AIC](https://en.wikipedia.org/wiki/Akaike_information_criterion) as the variable selection criteria. 
+
+## Forward Step-Wise variable selection via linear regression
+```{r forward model}
+lm_fit_forward <- train(price ~ ., data = training_set, "lmStepAIC", scope = 
+                    list(lower = ~., upper = ~.^2), direction = "forward")
+
+summary(lm_fit_forward$finalModel)
+
+training_set %>%
+     dplyr::select(price) %>%
+     bind_cols(residuals = resid(lm_fit_forward)) %>%
+     ggplot(aes(x = price, y = residuals)) +
+     geom_point() +
+     geom_abline(intercept = 0, slope = 0 , col = "red")+
+     xlab("Fitted values of Price") +
+     ylab("Model Residuals") + 
+     ggtitle("Model Diagnostic") +
+     theme_bw()
+```
+final model producs a R^2 of .864, which will become important later in comparing models
+
+### Validation of forward variable selection model
+```{r forward model validation}
+frwrd_pred <- predict(lm_fit_forward, newdata = testing_set[,-1]) 
+
+testing_set %>%
+     dplyr::select(price) %>%
+     bind_cols(prediction = frwrd_pred) %>%
+     ggplot(aes(x = price, y = prediction)) +
+     geom_point() +
+     geom_abline(intercept = 0, col = "red")+
+     xlab("Actual values of Price") +
+     ylab("Predicted values of Price") + 
+     ggtitle("Prediction Diagnostics") +
+     theme_bw()
+```
+
+## Backward Step-Wise variable selection via linear regression
+```{r backward model}
+lm_fit_backward <- train(price ~ ., data = training_set, "lmStepAIC", scope = 
+                    list(lower = ~., upper = ~.^2), direction = "backward")
+
+summary(lm_fit_backward$finalModel)
+
+training_set %>%
+     dplyr::select(price) %>%
+     bind_cols(residuals = resid(lm_fit_backward)) %>%
+     ggplot(aes(x = price, y = residuals)) +
+     geom_point() +
+     geom_abline(intercept = 0, slope = 0 , col = "red")+
+     xlab("Fitted values of Price") +
+     ylab("Model Residuals") + 
+     ggtitle("Model Diagnostic") +
+     theme_bw()
+```
+final model producs a R^2 of .782, which will become important later in comparing models
+
+### Validation of backward variable selection model
+```{r backward modeling validation}
+backward_pred <- predict(lm_fit_backward, newdata = testing_set[,-1]) 
+
+testing_set %>%
+     dplyr::select(price) %>%
+     bind_cols(prediction = backward_pred) %>%
+     ggplot(aes(x = price, y = prediction)) +
+     geom_point() +
+     geom_abline(intercept = 0, col = "red")+
+     xlab("Actual values of Price") +
+     ylab("Predicted values of Price") + 
+     ggtitle("Prediction Diagnostics") +
+     theme_bw()
+```
+
+# Modeling with 10-fold crossvalidation
+
+
+```{r cv model}
+ctrl<-trainControl(method = "cv", number = 10)
+
+lm_cv_fit <- train(price ~ ., data = rl_stt_data, method = "lm", trControl = ctrl, metric="Rsquared")
+
+summary(lm_cv_fit)
+
+rl_stt_data %>%
+     dplyr::select(price) %>%
+     bind_cols(residuals = resid(lm_cv_fit)) %>%
+     ggplot(aes(x = price, y = residuals)) +
+     geom_point() +
+     geom_abline(intercept = 0, slope = 0 , col = "red")+
+     xlab("Fitted values of Price") +
+     ylab("Model Residuals") + 
+     ggtitle("Model Diagnostic") +
+     theme_bw()
+```
+final model producs a R^2 of .7877, which will become important later in comparing models
+
+### Model validation
+```{r cv model validation}
+cv_pred <- predict(lm_cv_fit) 
+
+rl_stt_data %>%
+     dplyr::select(price) %>%
+     bind_cols(prediction = cv_pred) %>%
+     ggplot(aes(x = price, y = prediction)) +
+     geom_point() +
+     geom_abline(intercept = 0, col = "red")+
+     xlab("Actual values of Price") +
+     ylab("Predicted values of Price") + 
+     ggtitle("Prediction Diagnostics") +
+     theme_bw()
+```
+
+# Going the extra mile for model validation using Bayesian Regression
+```{r bayesian}
+# we are going to use same model as before
+
+bayes_model_check <- MCMCregress(price ~ area + bed + bath + 
+                                      ac + grsize + pool + 
+                                      age + qu + style + 
+                                      lotsize + hgway + age:qu + 
+                                      qu:lotsize + area:bed + 
+                                      area:qu + qu:style + grsize:lotsize + 
+                                      ac:lotsize + ac:age + age:lotsize + 
+                                      bed:style + bed:ac + bed:qu + 
+                                      age:style + area:age + bed:bath + 
+                                      ac:pool + pool:lotsize + area:style,
+                                 data = training_set)
+
+raftery.diag(bayes_model_check)
+```
+
+I ran my model in a Monte Carlo simulation with 10000 iterations. The summary output of the simulation confirmed the model selected. All the variables were within less than one standard deviation from their mean, thus the model is stable and ready for use within the framework of its requirement. 
+
+# Now, lets to boosing model on the data
+
+```{r gbm}
+metric <- "Rsquared"
+trainControl <- trainControl(method = "cv", number = 10)
+
+caretGrid <- expand.grid(interaction.depth=c(1, 3, 5), n.trees = (0:50)*50,
+                         shrinkage=c(0.01, 0.001),
+                         n.minobsinnode=10)
+
+set.seed(99)
+
+gbm_fit <- train(price ~ .
+                   , data=training_set
+                   , distribution="gaussian"
+                   , method="gbm"
+                   , trControl=trainControl
+                   , verbose=FALSE
+                   , tuneGrid=caretGrid
+                   , metric=metric
+                   , bag.fraction=0.75
+)                  
+
+print(gbm.caret)
+```
+best R^2 value from GBM is 0.82
+
+## GBM validation
+```{r}
+caret.predict <- predict(gbm.caret, newdata = testing_set, type = "raw")
+
+rmse.caret<-rmse(testing_set$price, caret.predict)
+print(paste0("RMSE = ", rmse.caret))
+
+testing_set %>%
+  dplyr::select(price) %>%
+  bind_cols(prediction = caret.predict) %>%
+  ggplot(aes(x = price, y = prediction)) +
+  geom_point() +
+  geom_abline(intercept = 0, col = "red")+
+  xlab("Actual values of Price") +
+  ylab("Predicted values of Price") + 
+  ggtitle("Prediction Diagnostics") +
+  theme_bw()
+
+```
+
+# Conclusion
+
+Even though I used one of the most successful algorithms in GBM on the data, the linear Regression model with forward variable selection came out on top with a better R^2 and the model was further confirmed by Bayesian method. The reason for the model that one is that the forward variable selection method also tested all the interaction variables and based on AIC selected the best model that included those as well.
